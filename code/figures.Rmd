@@ -1,0 +1,536 @@
+---
+title: "Figures"
+author: "Hubert Baniecki"
+date: "`r Sys.Date()`"
+fontsize: 12pt
+mainfont: Arial
+papersize: a4
+output: 
+  pdf_document:
+    keep_tex: false
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: xelatex
+header-includes:
+   - \linespread{1.2}
+tables: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(ggplot2)
+library(visdat)
+library(DataExplorer)
+library(patchwork)
+library(tidyr)
+library(purrr)
+
+SEED <- 123
+DT_LABEL <- "Decision tree (tuned)"
+RF_LABEL <- "Random forest (tuned)"
+
+source("utils.R")
+df <- readRDS("../data/mpilot_accidents_dataset_preprocessed.rds")
+```
+
+# Data
+
+```{r}
+pmiss <- vis_miss(df, cluster = T, sort_miss = T) +
+  theme(plot.margin = margin(0, 1, 0, 0, "cm"),
+        legend.text = element_text(color = "#371ea3"),
+        legend.title = element_text(color = "#371ea3"),
+        axis.title = element_text(color = "#371ea3"),
+        plot.title = element_text(color = "#371ea3", size = 16, hjust = 0),
+        plot.subtitle = element_text(color = "#371ea3", hjust = 0),
+        axis.text = element_text(color = "#371ea3", size = 10),
+        strip.text = element_text(color = "#371ea3", size = 12, hjust = 0),) + 
+  labs(x="variable", y="observations")
+ggsave("../results/fig_missing.png", pmiss, width=10, height=5)
+```
+
+\clearpage
+
+```{r}
+# plot_histogram(df, ncol = 2, theme = DALEX::theme_drwhy())
+
+plot_df <- df %>%
+  keep(is.numeric) %>%
+  split(f = df$target) %>%
+  lapply(function(x) x %>% select(-target) %>% gather() %>% na.omit())
+plot_df$`0`$target <- "0"
+plot_df$`1`$target <- "1"
+plot_df <- do.call(rbind, plot_df)
+
+dict <- c("age_of_vessel"="age_of_vessel [years]",
+          "sea_state"="sea_state [wave height]",
+          "visibility"="visibility",
+          "wind_force"="wind_force [Beaufort]")
+
+p1 <- ggplot(plot_df) +
+  geom_histogram(binwidth=0.5,
+                 aes(x=value, fill=target), position="dodge") +
+  facet_wrap(~key, scales = 'free', labeller = as_labeller(dict)) +
+  DALEX::theme_drwhy() + 
+  scale_fill_manual(
+    breaks=c("0", "1"),
+    labels=c("non-accident", "accident"),
+    values=DALEX::colors_discrete_drwhy(3)[c(2, 1)]
+  ) + 
+  theme(
+    legend.text = element_text(color = "#371ea3"),
+    legend.title = element_text(color = "#371ea3"),
+    strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)
+  ) +
+  labs(x=NULL)
+
+p1
+ggsave("../results/fig_data_numeric.png", p1, width=10, height=5)
+```
+
+\clearpage
+
+```{r}
+# plot_bar(df, theme = DALEX::theme_drwhy_vertical())
+
+isnot.numeric <- function(...) {
+  !is.numeric(...)
+}
+
+levels(df$gross_ton) <- stringr::str_replace_all(levels(df$gross_ton), "e\\+03", "k")
+levels(df$gross_ton) <- stringr::str_replace_all(levels(df$gross_ton), "e\\+04", "0k")
+levels(df$gross_ton) <- stringr::str_replace_all(levels(df$gross_ton), "e\\+05", "00k")
+
+plot_df <- df %>%
+  keep(isnot.numeric) %>%
+  cbind(target=df$target) %>%
+  split(f = df$target) %>%
+  lapply(function(x) x %>% select(-target) %>% lapply(plyr::count) %>% do.call(rbind, .))
+plot_df$`0`$target <- "0"
+plot_df$`0`$variable <- stringr::str_split(rownames(plot_df$`0`), "\\.", n = 2, simplify = T)[,1]
+plot_df$`1`$target <- "1"
+plot_df$`1`$variable <- stringr::str_split(rownames(plot_df$`1`), "\\.", n = 2, simplify = T)[,1]
+plot_df <- do.call(rbind, plot_df)
+plot_df$variable <- factor(plot_df$variable, levels = sort(unique(plot_df$variable))[c(1,2,3,6,5,4,7,8)])
+levels(plot_df$x) <- c(levels(plot_df$x), "(Missing)")
+plot_df$x[is.na(plot_df$x)] <- "(Missing)"
+
+levels(plot_df$variable)[levels(plot_df$variable)=="length_overall"] <- "length_overall [meters]"
+
+p2 <- ggplot(plot_df) +
+  geom_col(aes(x=x, y=freq, fill=target), position="dodge") +
+  facet_wrap(~variable, scales = 'free', ncol=3) +
+  coord_flip() + 
+  DALEX::theme_drwhy_vertical() + 
+  scale_fill_manual(
+    breaks=c("0", "1"),
+    labels=c("non-accident", "accident"),
+    values=DALEX::colors_discrete_drwhy(3)[c(2, 1)]
+  ) +
+  theme(
+    legend.text = element_text(color = "#371ea3"),
+    legend.title = element_text(color = "#371ea3"),
+    strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)
+  ) +
+  labs(y="count", x=NULL)
+p2
+
+ggsave("../results/fig_data_categorical.png", p2, width=10, height=10)
+```
+
+
+```{r fig.height=14, fig.width=8}
+# p1 / p2 +
+#   plot_layout(guides = "collect", height=c(1,3)) &
+#   theme(legend.position="top")
+```
+
+## target table
+
+```{r}
+table(df$target)
+cat("Target mean: ", mean(df$target))
+```
+
+## data table
+
+```{r}
+library(gtsummary)
+
+dfsummary <- df[, order(colnames(df))] %>%
+  tbl_summary(by = target, missing_text = "(Missing)", type = all_continuous() ~ "continuous2", statistic = all_continuous() ~ c("{N_nonmiss}", "{min}, {max}", "{median} ({p25}, {p75})")) %>%
+  add_n() %>%
+  bold_labels() %>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Target variable**") %>%
+  modify_header(label ~ "**Variable**")
+
+dfsummary
+```
+
+
+\clearpage
+
+# Model performance
+
+```{r}
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
+eval_tree_baseline <- evaluate_tree(df, importance = TRUE)
+eval_tree_baseline_scores <- round(as.data.frame(eval_tree_baseline$scores), 2)
+rownames(eval_tree_baseline_scores) <- "Decision tree (baseline)"
+
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
+eval_tree_best <- evaluate_tree(df, importance = TRUE,
+                                 control = rpart.control(
+                                   maxdepth = 4,
+                                   minsplit = 13,
+                                   cp = 0.001
+                                 ))
+eval_tree_best_scores <- round(as.data.frame(eval_tree_best$scores), 2)
+rownames(eval_tree_best_scores) <- DT_LABEL
+
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
+explainers_tree_best <- explainers_tree(df,
+                                control = rpart.control(
+                                  maxdepth = 4,
+                                  minsplit = 13,
+                                  cp = 0.001
+                                ))
+
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
+eval_forest_baseline <- evaluate_forest(df, importance = TRUE)
+eval_forest_baseline_scores <- round(as.data.frame(eval_forest_baseline$scores), 2)
+rownames(eval_forest_baseline_scores) <- "Random forest (baseline)"
+
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
+eval_forest_best <- evaluate_forest(df, importance = TRUE,
+                                    n_trees = 200,
+                                    row_frac = 0.7,
+                                    col_frac = 0.6,
+                                    control = rpart.control(
+                                      maxdepth = 7,
+                                      minsplit = 10,
+                                      cp = 0.01
+                                    ))
+eval_forest_best_scores <- round(as.data.frame(eval_forest_best$scores), 2)
+rownames(eval_forest_best_scores) <- RF_LABEL
+
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
+explainers_forest_best <- explainers_forest(df,
+                                    n_trees = 200,
+                                    row_frac = 0.7,
+                                    col_frac = 0.6,
+                                    control = rpart.control(
+                                      maxdepth = 7,
+                                      minsplit = 10,
+                                      cp = 0.01
+                                    ))
+```
+
+```{r}
+rbind(eval_tree_baseline_scores, eval_tree_best_scores,
+      eval_forest_baseline_scores, eval_forest_best_scores)
+```
+
+```{r}
+## ROC curve
+mpt1 <- model_performance(explainers_tree_best[[1]])
+mpt1$residuals$iter <- "t1"
+mpt1$residuals$label <- DT_LABEL
+mpt2 <- model_performance(explainers_tree_best[[2]])
+mpt2$residuals$iter <- "t2"
+mpt2$residuals$label <- DT_LABEL
+mpt3 <- model_performance(explainers_tree_best[[3]])
+mpt3$residuals$iter <- "t3"
+mpt3$residuals$label <- DT_LABEL
+mpt4 <- model_performance(explainers_tree_best[[4]])
+mpt4$residuals$iter <- "t4"
+mpt4$residuals$label <- DT_LABEL
+mpt5 <- model_performance(explainers_tree_best[[5]])
+mpt5$residuals$iter <- "t5"
+mpt5$residuals$label <- DT_LABEL
+mpf1 <- model_performance(explainers_forest_best[[1]])
+mpf1$residuals$iter <- "f1"
+mpf1$residuals$label <- RF_LABEL
+mpf2 <- model_performance(explainers_forest_best[[2]])
+mpf2$residuals$iter <- "f2"
+mpf2$residuals$label <- RF_LABEL
+mpf3 <- model_performance(explainers_forest_best[[3]])
+mpf3$residuals$iter <- "f3"
+mpf3$residuals$label <- RF_LABEL
+mpf4 <- model_performance(explainers_forest_best[[4]])
+mpf4$residuals$iter <- "f4"
+mpf4$residuals$label <- RF_LABEL
+mpf5 <- model_performance(explainers_forest_best[[5]])
+mpf5$residuals$iter <- "f5"
+mpf5$residuals$label <- RF_LABEL
+
+p_roc <- plot_roc_multiple(
+  mpt1, mpt2, mpt3, mpt4, mpt5, mpf1, mpf2, mpf3, mpf4, mpf5
+)
+
+## PR curve
+ext1 <- explainers_tree_best[[1]]
+ext1$label <- DT_LABEL
+ext1$iter <- "t1"
+ext2 <- explainers_tree_best[[2]]
+ext2$label <- DT_LABEL
+ext2$iter <- "t2"
+ext3 <- explainers_tree_best[[3]]
+ext3$label <- DT_LABEL
+ext3$iter <- "t3"
+ext4 <- explainers_tree_best[[4]]
+ext4$label <- DT_LABEL
+ext4$iter <- "t4"
+ext5 <- explainers_tree_best[[5]]
+ext5$label <- DT_LABEL
+ext5$iter <- "t5"
+exf1 <- explainers_forest_best[[1]]
+exf1$label <- RF_LABEL
+exf1$iter <- "f1"
+exf2 <- explainers_forest_best[[2]]
+exf2$label <- RF_LABEL
+exf2$iter <- "f2"
+exf3 <- explainers_forest_best[[3]]
+exf3$label <- RF_LABEL
+exf3$iter <- "f3"
+exf4 <- explainers_forest_best[[4]]
+exf4$label <- RF_LABEL
+exf4$iter <- "f4"
+exf5 <- explainers_forest_best[[5]]
+exf5$label <- RF_LABEL
+exf5$iter <- "f5"
+
+p_prc <- plot_prc_multiple(
+  ext1, ext2, ext3, ext4, ext5, exf1, exf2, exf3, exf4, exf5
+)
+
+p_performance <- p_roc + p_prc +
+  plot_layout(guides = "collect") &
+  theme(legend.position = 'top')
+
+ggsave("../results/fig_model_performance.png", p_performance, width=8, height=6)
+
+p_performance
+```
+
+# Variable importance
+
+```{r}
+df_importance_split <- rbind(
+  cbind(eval_forest_best$importance_split, model = RF_LABEL),
+  cbind(eval_tree_best$importance_split, model = DT_LABEL)
+)
+p_importance_split <- ggplot(df_importance_split) +
+  geom_col(aes(x=importance, y=variable, fill=model), position="dodge") +
+  DALEX::theme_drwhy_vertical() +
+  scale_fill_manual(name = "Model", values = DALEX::colors_discrete_drwhy(3)) +
+  labs(y="", x="split gain")
+
+df_importance_perm <- rbind(
+  cbind(eval_forest_best$importance_perm, model = RF_LABEL),
+  cbind(eval_tree_best$importance_perm, model = DT_LABEL)
+)
+p_importance_perm <- ggplot(df_importance_perm) +
+  geom_col(aes(x=importance, y=variable, fill=model), position="dodge") +
+  DALEX::theme_drwhy_vertical() +
+  scale_fill_manual(name = "Model", values = DALEX::colors_discrete_drwhy(3)) +
+  labs(y="", x="1 - AUC after variable permutation") +
+  coord_cartesian(c(0.2, 0.45))
+
+
+p_importance <- p_importance_perm + p_importance_split +
+  plot_annotation(
+    title = "Variable importance",
+    theme = theme(
+      plot.title = element_text(color = "#371ea3", size = 16, hjust = 0)
+    )
+  ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = 'top',
+        legend.text = element_text(color = "#371ea3"),
+        legend.title = element_text(color = "#371ea3"))
+
+ggsave("../results/fig_variable_importance.png", p_importance, width=8, height=6)
+
+p_importance
+```
+
+\clearpage
+
+```{r}
+# result_tree <- readRDS(paste0("../results/tree_grid.rds"))
+# result_df_tree <- round(do.call(
+#   rbind, sapply(result_tree[,1], function(x) as.data.frame(x), simplify = F)
+# ), 3)
+# head(result_df_tree[order(result_df_tree$auprc_m, decreasing = T),])
+# head(result_df_tree[order(result_df_tree$auc_m, decreasing = T),])
+```
+
+
+
+```{r}
+# result_forest <- readRDS(paste0("../results/forest_grid.rds"))
+# result_df_forest <- round(do.call(
+#   rbind, sapply(result_forest[,1][result_forest[,1] != " failed "],
+#                 function(x) as.data.frame(x),
+#                 simplify = F)
+# ), 3)
+# head(result_df_forest[order(result_df_forest$auprc_m, decreasing = T),])
+# head(result_df_forest[order(result_df_forest$auc_m, decreasing = T),])
+```
+
+# Decision tree interpretation
+
+```{r fig.height=12, fig.width=9}
+df_temp <- df
+target_weights <- create_weights(df_temp$target)
+target_values <- df_temp$target
+df_temp$target <- as.factor(df_temp$target)
+levels(df_temp$length_overall) <- 1:length(levels(df_temp$length_overall))
+levels(df_temp$gross_ton) <- 1:length(levels(df_temp$gross_ton))
+tree_plot <- rpart(
+  target ~., df_temp,
+  weights = target_weights,
+  control = rpart.control(
+    maxdepth = 7,
+    minsplit = 10,
+    cp = 0.01
+  )
+)
+exp_tree_plot <- DALEX::explain(
+  tree_plot, df_temp[,-1], target_values, verbose = FALSE
+)
+rpart.plot::rpart.plot(
+  tree_plot,
+  type = 5,
+  extra = 101,
+  cex = 0.8,
+  split.fun = plot_split_labels,
+  shadow.col = "black",
+  shadow.offset = 0.25,
+  split.yspace = 0,
+  box.palette = DALEX::colors_discrete_drwhy(3)[c(2, 1)],
+  gap = 0.5
+)
+```
+
+\clearpage
+
+# Random forest explanation
+
+```{r}
+df_temp <- df
+target_weights <- create_weights(df_temp$target)
+target_values <- df_temp$target
+df_temp$target <- as.factor(df_temp$target)
+
+forest_plot <- create_forest(
+  data = df_temp,
+  weights = target_weights,
+  n_trees = 100,
+  row_frac = 0.7,
+  col_frac = 0.6,
+  control = rpart.control(
+    maxdepth = 7,
+    minsplit = 10,
+    cp = 0.01
+  ),
+  random_seed = 123
+)
+
+exp_forest_plot <- DALEX::explain(
+  forest_plot, as.data.frame(df_temp[,-1]), target_values,
+  pf = pf_forest,
+  verbose = FALSE,
+  label = "Random forest (tuned)",
+  type = "classification"
+)
+e <- exp_forest_plot
+```
+
+```{r}
+mprofile_num <- model_profile(e, N=406)
+mprofile_cat <- model_profile(e, N=406, variable_type = "categorical")
+```
+
+```{r fig.height=9, fig.width=10}
+mprofile_num$agr_profiles$`_vname_`[
+  mprofile_num$agr_profiles$`_vname_` == "age_of_vessel"
+] <- "age_of_vessel [years]"
+
+p_pdp_num <- plot(mprofile_num, variables = c("visibility", "age_of_vessel [years]")) +
+  labs(title = "Partial dependence plot", subtitle = NULL, y = "average prediction (absolute)") +
+  theme(axis.title.y = element_text(vjust = -15),
+        strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8))
+
+mprofile_cat$agr_profiles$`_vname_`[
+  mprofile_cat$agr_profiles$`_vname_` == "length_overall"
+] = "length_overall [meters]"
+
+p_pdp_cat <- plot(mprofile_cat, facet_scales = "free_y",
+                  variables = c("ship_type", "dynamic_status", "gross_ton", "length_overall [meters]")) +
+  coord_flip() + 
+  theme_drwhy_vertical() +
+  theme(strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)) +
+  labs(title = NULL, subtitle = NULL, caption = NULL, y = "average prediction (absolute)")
+
+p_pdp_cat$data$`_yhat_` <- p_pdp_cat$data$`_yhat_` - mean(e$y_hat)
+p_pdp_cat$data$`_vname_` <- factor(p_pdp_cat$data$`_vname_`, levels = c("ship_type", "dynamic_status", "gross_ton", "length_overall [meters]"))
+p_pdp_num$data$`_yhat_` <- p_pdp_num$data$`_yhat_` - mean(e$y_hat)
+
+p_pdp <- p_pdp_num / (p_pdp_cat + scale_y_continuous(limits=c(-0.1, 0.2))) +
+  plot_layout(heights = c(1, 2))
+
+ggsave("../results/fig_model_pdp.png", p_pdp, width=8, height=9)
+
+p_pdp
+```
+
+```{r}
+vcolors <- DALEX::colors_breakdown_drwhy()
+vcolors["1"] <- "#4378bf"
+MAX_VARS <- 4
+  
+bd_min <- predict_parts(e, as.data.frame(df_temp[which.min(e$y_hat),]))
+bd_min$label <- paste0("Observation ID: ", which.min(e$y_hat))
+
+index_avg <- which.min(abs(e$y_hat - mean(e$y_hat)))
+bd_avg <- predict_parts(e, as.data.frame(df_temp[index_avg,]))
+bd_avg$label <- paste0("Observation ID: ", index_avg)
+
+bd_max <- predict_parts(e, as.data.frame(df_temp[which.max(e$y_hat),]))
+bd_max$label <- paste0("Observation ID: ", which.max(e$y_hat))
+```
+
+```{r fig.height=9, fig.width=7}
+min_max <- c(0.15, 1.05)
+p_bd <- (plot(bd_min, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) + labs(title = "Break down of random forest predictions")) /
+  (plot(bd_avg, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) + labs(title = NULL)) /
+  (plot(bd_max, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) + labs(title = NULL))
+
+ggsave("../results/fig_breakdown.png", p_bd, width=9, height=7)
+
+p_bd
+```
+
+```{r fig.height=9, fig.width=7}
+sh_min <- predict_parts(e, df_temp[which.min(e$y_hat),], type = "shap")
+sh_min$label <- paste0("Observation ID: ", which.min(e$y_hat))
+
+index_avg <- which.min(abs(e$y_hat - mean(e$y_hat)))
+sh_avg <- predict_parts(e, df_temp[index_avg,], type = "shap")
+sh_avg$label <- paste0("Observation ID: ", index_avg)
+
+sh_max <- predict_parts(e, df_temp[which.max(e$y_hat),], type = "shap")
+sh_max$label <- paste0("Observation ID: ", which.max(e$y_hat))
+
+p_sh <- (plot(sh_min, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + labs(title = "Shapley values of random forest predictions", y=NULL) + scale_y_continuous(limits=c(-0.1, 0.15))) /
+  (plot(sh_avg, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + labs(title = NULL, y=NULL) + scale_y_continuous(limits=c(-0.1, 0.15))) /
+  (plot(sh_max, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + labs(title = NULL) + scale_y_continuous(limits=c(-0.1, 0.15)))
+
+ggsave("../results/fig_shapleyvalues.png", p_sh, width=9, height=7)
+
+p_sh
+```
+
