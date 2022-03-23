@@ -401,7 +401,14 @@ plot_split_labels <- function(x, labs, digits, varlen, faclen) {
     label <- ""
     values <- strsplit(x, ",")[[1]]
     additional_iter <- 1
-    if (length(values) == 1) return(values)
+    if (length(values) == 1) {
+      
+      # special case for the `visibility` variable
+      if (values == " >= 2") values <- "Moderate, Poor"
+      if (values == " < 2") values <- "Good"
+      
+      return(values)
+    }
     for (i in 1:length(values)) {
       value <- values[i]
       length <- length + nchar(value)
@@ -427,6 +434,7 @@ plot_split_labels <- function(x, labs, digits, varlen, faclen) {
   c(root, temp)
 }
 
+
 # receiver operating characteristic
 plot_roc_multiple <- function(...) {
   # based on https://github.com/ModelOriented/DALEX/blob/master/R/plot_model_performance.R
@@ -441,28 +449,42 @@ plot_roc_multiple <- function(...) {
     df <- do.call(rbind, rev(dfl))
   }
   
+  fpr_domain <- seq(0, 1, length.out=21)
+  
   rocdfl <- lapply(dfl, function(df) {
     # assuming that y = 0/1 where 1 is the positive
     tpr_tmp <- tapply(df$observed, df$predicted, sum)
-    tpr <- c(0,cumsum(rev(tpr_tmp)))/sum(df$observed)
+    tpr <- c(0, cumsum(rev(tpr_tmp))) / sum(df$observed)
     fpr_tmp <- tapply(1 - df$observed, df$predicted, sum)
-    fpr <- c(0,cumsum(rev(fpr_tmp)))/sum(1 - df$observed)
+    fpr <- c(0, cumsum(rev(fpr_tmp))) / sum(1 - df$observed)
     
-    data.frame(tpr = tpr, fpr = fpr, label = df$label[1], iter = df$iter[1])
+    tpr_interpolated <- pracma::interp1(fpr, tpr, fpr_domain)
+    tpr_interpolated[1] <- 0
+    tpr_interpolated[length(fpr_domain)] <- 1
+    
+    data.frame(tpr = tpr_interpolated, fpr = fpr_domain, 
+               label = df$label[1], iter = df$iter[1])
   })
   rocdf <- do.call(rbind, rocdfl)
   
-  fpr <- tpr <- label <- NULL
-  ggplot(rocdf, aes(x = fpr, y = tpr, group = iter, color = label)) +
+  rocdf_aggregated <- rocdf %>%
+    group_by(label, fpr) %>% 
+    summarise(tpr_m = mean(tpr), tpr_sd = sd(tpr))
+  
+  fpr <- tpr_m <- tpr_sd <- label <- NULL
+  ggplot(rocdf_aggregated, aes(x = fpr, y = tpr_m)) +
     geom_abline(slope = 1, intercept = 0, color = "darkgrey", lty = 2) +
-    geom_line(size = 1) +
+    geom_line(aes(color = label), size = 1) +
+    geom_ribbon(aes(ymin = tpr_m - tpr_sd, ymax = tpr_m + tpr_sd, fill = label), 
+                alpha = 0.5) +
     theme_drwhy() +
+    scale_fill_manual(name = "Model", values = colors_discrete_drwhy(3)) +
     scale_color_manual(name = "Model", values = colors_discrete_drwhy(3)) +
     scale_x_continuous("False positive rate", limits = c(0, 1), expand = c(0, 0)) +
     scale_y_continuous("True positive rate", limits = c(0, 1), expand = c(0, 0)) +
     coord_fixed() +
     labs(title = "ROC curve",
-         subtitle = "for 5 cross-validation runs") +
+         subtitle = "mean +- sd for five train:test splits") +
     theme(
       panel.grid.major.y = element_line(color = "grey90", size = 0.5, linetype = 1),
       panel.grid.minor.y = element_line(color = "grey90", size = 0.5,  linetype = 1),
@@ -477,27 +499,41 @@ plot_roc_multiple <- function(...) {
 plot_prc_multiple <- function(...) {
   expl <- list(...)
   
+  recall_domain <- seq(0, 1, length.out=21)
+  
   prdfl <- lapply(expl, function(exp) {
     fg <- exp$y_hat[exp$y == 1]
     bg <- exp$y_hat[exp$y == 0]
     pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T)
     df <- pr$curve
-    data.frame(precision = rev(df[,2]),
-               recall = rev(df[,1]),
+    
+    precision_interpolated <- pracma::interp1(rev(df[,1]), rev(df[,2]), recall_domain)
+    
+    data.frame(precision = precision_interpolated,
+               recall = recall_domain,
                label = exp$label,
                iter = exp$iter)
   })
   prdf <- do.call(rbind, prdfl)
 
-  ggplot(prdf, aes(x = recall, y = precision, group = iter, color = label)) +
+  prdf_aggregated <- prdf %>%
+    group_by(label, recall) %>% 
+    summarise(precision_m = mean(precision), precision_sd = sd(precision))
+  
+  ggplot(prdf_aggregated, aes(x = recall, y = precision_m)) +
     geom_hline(yintercept = 0.77, color = "darkgrey", lty = 2) +
-    geom_step(size = 1) +
+    geom_step(aes(color = label), size = 1) +
+    geom_ribbon(aes(ymin = precision_m - precision_sd,
+                    ymax = precision_m + precision_sd, 
+                    fill = label), 
+                alpha = 0.5) +
     theme_drwhy() +
+    scale_fill_manual(name = "Model", values = colors_discrete_drwhy(3)) +
     scale_color_manual(name = "Model", values = colors_discrete_drwhy(3)) +
     scale_x_continuous("Recall", limits = c(0, 1), expand = c(0, 0)) +
     scale_y_continuous("Precision", limits = c(0.75, 1), expand = c(0, 0)) +
     labs(title = "PR curve",
-         subtitle = "for 5 cross-validation runs") +
+         subtitle = "mean +- sd for five train:test splits") +
     theme(
       panel.grid.major.y = element_line(color = "grey90", size = 0.5, linetype = 1),
       panel.grid.minor.y = element_line(color = "grey90", size = 0.5,  linetype = 1),

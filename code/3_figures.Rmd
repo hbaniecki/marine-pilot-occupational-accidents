@@ -30,14 +30,33 @@ SEED <- 123
 DT_LABEL <- "Decision tree (tuned)"
 RF_LABEL <- "Random forest (tuned)"
 
-source("utils.R")
+source("0_utils.R")
 df <- readRDS("../data/mpilot_accidents_dataset_preprocessed.rds")
+
+df_eda <- df %>%
+  mutate(
+    wave_height = sea_state, 
+    visibility = recode_factor(as.factor(visibility), 
+       "1"="Good", "2"="Moderate", "3"="Poor", "4"=NA_character_
+    )
+  )
+
+levels(df_eda$gross_ton) <- stringr::str_replace_all(levels(df_eda$gross_ton), "e\\+03", "k")
+levels(df_eda$gross_ton) <- stringr::str_replace_all(levels(df_eda$gross_ton), "e\\+04", "0k")
+levels(df_eda$gross_ton) <- stringr::str_replace_all(levels(df_eda$gross_ton), "e\\+05", "00k")
+
+levels(df_eda$gross_ton)[7] <- "(10k,15k]"
+levels(df_eda$gross_ton)[8] <- "(15k,20k]"
+levels(df_eda$gross_ton)[9] <- "(20k,25k]"
+levels(df_eda$gross_ton)[10] <- "(25k,30k]"
+levels(df_eda$gross_ton)[13] <- "(60k,75k]"
+levels(df_eda$gross_ton)[14] <- "(75k,100k]"
 ```
 
 # Data
 
 ```{r}
-pmiss <- vis_miss(df, cluster = T, sort_miss = T) +
+pmiss <- vis_miss(df_eda, cluster = T, sort_miss = T) +
   theme(plot.margin = margin(0, 1, 0, 0, "cm"),
         legend.text = element_text(color = "#371ea3"),
         legend.title = element_text(color = "#371ea3"),
@@ -46,47 +65,85 @@ pmiss <- vis_miss(df, cluster = T, sort_miss = T) +
         plot.subtitle = element_text(color = "#371ea3", hjust = 0),
         axis.text = element_text(color = "#371ea3", size = 10),
         strip.text = element_text(color = "#371ea3", size = 12, hjust = 0),) + 
-  labs(x="variable", y="observations")
+  labs(x="Variable", y="Number of observations")
 ggsave("../results/fig_missing.png", pmiss, width=10, height=5)
 ```
 
 \clearpage
 
 ```{r}
-# plot_histogram(df, ncol = 2, theme = DALEX::theme_drwhy())
-
-plot_df <- df %>%
-  keep(is.numeric) %>%
-  split(f = df$target) %>%
-  lapply(function(x) x %>% select(-target) %>% gather() %>% na.omit())
-plot_df$`0`$target <- "0"
-plot_df$`1`$target <- "1"
-plot_df <- do.call(rbind, plot_df)
-
-dict <- c("age_of_vessel"="age_of_vessel [years]",
-          "sea_state"="sea_state [wave height]",
-          "visibility"="visibility",
-          "wind_force"="wind_force [Beaufort]")
+plot_df <- df_eda %>%
+  mutate(
+    target = factor(target)
+  )
 
 p1 <- ggplot(plot_df) +
-  geom_histogram(binwidth=0.5,
-                 aes(x=value, fill=target), position="dodge") +
-  facet_wrap(~key, scales = 'free', labeller = as_labeller(dict)) +
+  geom_histogram(
+    aes(x=age_of_vessel, fill=target),
+    position = "dodge",
+    binwidth = 1
+  ) +
+  scale_x_continuous(
+    breaks = seq(0, 45, 5)
+  ) +
   DALEX::theme_drwhy() + 
   scale_fill_manual(
     breaks=c("0", "1"),
     labels=c("non-accident", "accident"),
     values=DALEX::colors_discrete_drwhy(3)[c(2, 1)]
   ) + 
+  labs(x="age_of_vessel [years]", y="Number of observations")
+
+p2 <- ggplot(plot_df) +
+  geom_histogram(
+    aes(x=wave_height, fill=target),
+    position = "dodge",
+    binwidth = 0.5
+  ) +
+  scale_x_continuous(
+    breaks = 0:7
+  ) +
+  DALEX::theme_drwhy() + 
+  scale_fill_manual(
+    breaks=c("0", "1"),
+    labels=c("non-accident", "accident"),
+    values=DALEX::colors_discrete_drwhy(3)[c(2, 1)]
+  ) + 
+  labs(x="wave_height [meters]", y="")
+
+p3 <- ggplot(plot_df) +
+  geom_histogram(
+    aes(x=wind_force, fill=target),
+    position = "dodge",
+    binwidth = 0.5
+  ) +
+  scale_x_continuous(
+    breaks = 0:8
+  ) +
+  DALEX::theme_drwhy() + 
+  scale_fill_manual(
+    breaks=c("0", "1"),
+    labels=c("non-accident", "accident"),
+    values=DALEX::colors_discrete_drwhy(3)[c(2, 1)]
+  ) + 
+  labs(x="wind_force [Beaufort]", y=NULL)
+
+p_ylabel <- ggplot(data.frame(l = p1$labels$y, x = 1, y = 1)) +
+      geom_text(aes(x, y, label = l), angle = 90, color ="#371ea3") + 
+      theme_void() +
+      coord_cartesian(clip = "off")
+
+p1$labels$y <- p2$labels$y <- NULL
+
+p_ylabel + (p1 / (p2 + p3)) +
+  plot_layout(guides = "collect", widths = c(1, 50)) &
   theme(
     legend.text = element_text(color = "#371ea3"),
     legend.title = element_text(color = "#371ea3"),
-    strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)
-  ) +
-  labs(x=NULL)
+    legend.position = "top"
+  ) 
 
-p1
-ggsave("../results/fig_data_numeric.png", p1, width=10, height=5)
+ggsave("../results/fig_data_numeric.png", width=10, height=5)
 ```
 
 \clearpage
@@ -98,13 +155,9 @@ isnot.numeric <- function(...) {
   !is.numeric(...)
 }
 
-levels(df$gross_ton) <- stringr::str_replace_all(levels(df$gross_ton), "e\\+03", "k")
-levels(df$gross_ton) <- stringr::str_replace_all(levels(df$gross_ton), "e\\+04", "0k")
-levels(df$gross_ton) <- stringr::str_replace_all(levels(df$gross_ton), "e\\+05", "00k")
-
-plot_df <- df %>%
+plot_df <- df_eda %>%
   keep(isnot.numeric) %>%
-  cbind(target=df$target) %>%
+  cbind(target = df$target) %>%
   split(f = df$target) %>%
   lapply(function(x) x %>% select(-target) %>% lapply(plyr::count) %>% do.call(rbind, .))
 plot_df$`0`$target <- "0"
@@ -112,13 +165,13 @@ plot_df$`0`$variable <- stringr::str_split(rownames(plot_df$`0`), "\\.", n = 2, 
 plot_df$`1`$target <- "1"
 plot_df$`1`$variable <- stringr::str_split(rownames(plot_df$`1`), "\\.", n = 2, simplify = T)[,1]
 plot_df <- do.call(rbind, plot_df)
-plot_df$variable <- factor(plot_df$variable, levels = sort(unique(plot_df$variable))[c(1,2,3,6,5,4,7,8)])
+plot_df$variable <- factor(plot_df$variable, levels = sort(unique(plot_df$variable))[c(1,2,3,6,5,4,7,8,9)])
 levels(plot_df$x) <- c(levels(plot_df$x), "(Missing)")
 plot_df$x[is.na(plot_df$x)] <- "(Missing)"
 
 levels(plot_df$variable)[levels(plot_df$variable)=="length_overall"] <- "length_overall [meters]"
 
-p2 <- ggplot(plot_df) +
+p4 <- ggplot(plot_df) +
   geom_col(aes(x=x, y=freq, fill=target), position="dodge") +
   facet_wrap(~variable, scales = 'free', ncol=3) +
   coord_flip() + 
@@ -133,10 +186,10 @@ p2 <- ggplot(plot_df) +
     legend.title = element_text(color = "#371ea3"),
     strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)
   ) +
-  labs(y="count", x=NULL)
-p2
+  labs(y="Number of observations", x=NULL)
+p4
 
-ggsave("../results/fig_data_categorical.png", p2, width=10, height=10)
+ggsave("../results/fig_data_categorical.png", p4, width=10, height=10)
 ```
 
 
@@ -320,7 +373,9 @@ p_performance
 df_importance_split <- rbind(
   cbind(eval_forest_best$importance_split, model = RF_LABEL),
   cbind(eval_tree_best$importance_split, model = DT_LABEL)
-)
+) 
+levels(df_importance_split$variable)[levels(df_importance_split$variable) == "sea_state"] <- "wave_height"
+
 p_importance_split <- ggplot(df_importance_split) +
   geom_col(aes(x=importance, y=variable, fill=model), position="dodge") +
   DALEX::theme_drwhy_vertical() +
@@ -330,7 +385,9 @@ p_importance_split <- ggplot(df_importance_split) +
 df_importance_perm <- rbind(
   cbind(eval_forest_best$importance_perm, model = RF_LABEL),
   cbind(eval_tree_best$importance_perm, model = DT_LABEL)
-)
+) 
+levels(df_importance_perm$variable)[levels(df_importance_perm$variable) == "sea_state"] <- "wave_height"
+
 p_importance_perm <- ggplot(df_importance_perm) +
   geom_col(aes(x=importance, y=variable, fill=model), position="dodge") +
   DALEX::theme_drwhy_vertical() +
@@ -389,6 +446,7 @@ target_values <- df_temp$target
 df_temp$target <- as.factor(df_temp$target)
 levels(df_temp$length_overall) <- 1:length(levels(df_temp$length_overall))
 levels(df_temp$gross_ton) <- 1:length(levels(df_temp$gross_ton))
+set.seed(SEED, kind = "L'Ecuyer-CMRG")
 tree_plot <- rpart(
   target ~., df_temp,
   weights = target_weights,
@@ -451,6 +509,7 @@ e <- exp_forest_plot
 
 ```{r}
 mprofile_num <- model_profile(e, N=406)
+mprofile_visibility <- model_profile(e, variable = "visibility", N=406)
 mprofile_cat <- model_profile(e, N=406, variable_type = "categorical")
 ```
 
@@ -459,27 +518,49 @@ mprofile_num$agr_profiles$`_vname_`[
   mprofile_num$agr_profiles$`_vname_` == "age_of_vessel"
 ] <- "age_of_vessel [years]"
 
-p_pdp_num <- plot(mprofile_num, variables = c("visibility", "age_of_vessel [years]")) +
-  labs(title = "Partial dependence plot", subtitle = NULL, y = "average prediction (absolute)") +
+p_pdp_num <- plot(mprofile_num, variables = "age_of_vessel [years]") +
+  labs(title = "Partial dependence plot", 
+       subtitle = NULL, 
+       y = "average prediction (absolute)",
+       x = "age_of_vessel [years]") +
   theme(axis.title.y = element_text(vjust = -15),
-        strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8))
+        strip.text = element_blank())
 
 mprofile_cat$agr_profiles$`_vname_`[
   mprofile_cat$agr_profiles$`_vname_` == "length_overall"
 ] = "length_overall [meters]"
 
-p_pdp_cat <- plot(mprofile_cat, facet_scales = "free_y",
-                  variables = c("ship_type", "dynamic_status", "gross_ton", "length_overall [meters]")) +
+
+mprofile_visibility$agr_profiles$`_x_` <- recode_factor(as.factor(
+        mprofile_visibility$agr_profiles$`_x_`), 
+       "1"="Good", "2"="Moderate", "3"="Poor", "4"=NA_character_
+    )
+mprofile_visibility$agr_profiles <- mprofile_visibility$agr_profiles[1:3,]
+  
+p_pdp_num_visibility <- plot(mprofile_visibility) +
   coord_flip() + 
   theme_drwhy_vertical() +
   theme(strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)) +
   labs(title = NULL, subtitle = NULL, caption = NULL, y = "average prediction (absolute)")
 
-p_pdp_cat$data$`_yhat_` <- p_pdp_cat$data$`_yhat_` - mean(e$y_hat)
-p_pdp_cat$data$`_vname_` <- factor(p_pdp_cat$data$`_vname_`, levels = c("ship_type", "dynamic_status", "gross_ton", "length_overall [meters]"))
-p_pdp_num$data$`_yhat_` <- p_pdp_num$data$`_yhat_` - mean(e$y_hat)
+p_pdp_cat <- plot(mprofile_cat, facet_scales = "free_y",
+                  variables = c("visibility", "ship_type", "dynamic_status", 
+                                "gross_ton", "length_overall [meters]")) +
+  coord_flip() + 
+  theme_drwhy_vertical() +
+  theme(strip.text = element_text(color = "#371ea3", size = 12, vjust = 0.8)) +
+  labs(title = NULL, subtitle = NULL, caption = NULL, y = "average prediction (absolute)")
 
-p_pdp <- p_pdp_num / (p_pdp_cat + scale_y_continuous(limits=c(-0.1, 0.2))) +
+
+p_pdp_cat$data$`_yhat_` <- p_pdp_cat$data$`_yhat_` - mean(e$y_hat)
+p_pdp_cat$data$`_vname_` <- factor(p_pdp_cat$data$`_vname_`, 
+                                   levels = c("ship_type", "dynamic_status", 
+                                              "gross_ton", "length_overall [meters]"))
+p_pdp_num$data$`_yhat_` <- p_pdp_num$data$`_yhat_` - mean(e$y_hat)
+p_pdp_num_visibility$data$`_yhat_` <- p_pdp_num_visibility$data$`_yhat_` - mean(e$y_hat)
+
+p_pdp <- (p_pdp_num + p_pdp_num_visibility) / 
+  (p_pdp_cat + scale_y_continuous(limits=c(-0.1, 0.2))) +
   plot_layout(heights = c(1, 2))
 
 ggsave("../results/fig_model_pdp.png", p_pdp, width=8, height=9)
@@ -493,21 +574,40 @@ vcolors["1"] <- "#4378bf"
 MAX_VARS <- 4
   
 bd_min <- predict_parts(e, as.data.frame(df_temp[which.min(e$y_hat),]))
-bd_min$label <- paste0("Observation ID: ", which.min(e$y_hat))
+bd_min$label <- paste0("Observation ID: ", which.min(e$y_hat),
+                       " | Prediction: ", round(min(e$y_hat), 3))
 
 index_avg <- which.min(abs(e$y_hat - mean(e$y_hat)))
 bd_avg <- predict_parts(e, as.data.frame(df_temp[index_avg,]))
-bd_avg$label <- paste0("Observation ID: ", index_avg)
+bd_avg$variable[5] = "visibility = Poor"
+bd_avg$label <- paste0("Observation ID: ", index_avg, 
+                       " | Prediction: ", round(e$y_hat[index_avg], 3))
 
 bd_max <- predict_parts(e, as.data.frame(df_temp[which.max(e$y_hat),]))
-bd_max$label <- paste0("Observation ID: ", which.max(e$y_hat))
+bd_max$label <- paste0("Observation ID: ", which.max(e$y_hat), 
+                       " | Prediction: ", round(max(e$y_hat), 3))
 ```
 
 ```{r fig.height=9, fig.width=7}
 min_max <- c(0.15, 1.05)
-p_bd <- (plot(bd_min, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) + labs(title = "Break down of random forest predictions")) /
-  (plot(bd_avg, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) + labs(title = NULL)) /
-  (plot(bd_max, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) + labs(title = NULL))
+
+bd_min$variable[1] <- bd_avg$variable[1] <- bd_max$variable[1] <- "mean prediction"
+
+p_bd <- (
+  plot(bd_min, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) +
+    labs(title = "Break down of random forest predictions") +
+    scale_y_continuous(NULL, limits = c(0.05, 1.05))) /
+  (
+    plot(bd_avg, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) +
+      labs(title = NULL) + 
+      scale_y_continuous(NULL, limits = c(0.05, 1.05))) /
+  (
+    plot(bd_max, min_max = min_max, vcolors = vcolors, max_vars = MAX_VARS) +
+      labs(title = NULL) + 
+      scale_y_continuous("Variable attribution to the prediction", limits = c(0.05, 1.05))
+    ) & theme(axis.text.y=element_text(
+      face=c("bold", rep("plain", 4), rep("bold", 2))
+    ))
 
 ggsave("../results/fig_breakdown.png", p_bd, width=9, height=7)
 
@@ -515,19 +615,36 @@ p_bd
 ```
 
 ```{r fig.height=9, fig.width=7}
+# set.seed(123, kind = "L'Ecuyer-CMRG")
 sh_min <- predict_parts(e, df_temp[which.min(e$y_hat),], type = "shap")
-sh_min$label <- paste0("Observation ID: ", which.min(e$y_hat))
+sh_min$variable[sh_min$variable == "visibility = 2"] = "visibility = Moderate"
+sh_min$variable_value[sh_min$variable_name == "visibility"] = "Moderate"
+sh_min$label <- paste0("Observation ID: ", which.min(e$y_hat),
+                       " | Prediction: ", round(min(e$y_hat), 3))
 
 index_avg <- which.min(abs(e$y_hat - mean(e$y_hat)))
+# set.seed(123, kind = "L'Ecuyer-CMRG")
 sh_avg <- predict_parts(e, df_temp[index_avg,], type = "shap")
-sh_avg$label <- paste0("Observation ID: ", index_avg)
+sh_avg$variable[sh_avg$variable == "visibility = 3"] = "visibility = Poor"
+sh_avg$variable_value[sh_avg$variable_name == "visibility"] = "Poor"
+sh_avg$label <- paste0("Observation ID: ", index_avg, 
+                       " | Prediction: ", round(e$y_hat[index_avg], 3))
 
+# set.seed(123, kind = "L'Ecuyer-CMRG")
 sh_max <- predict_parts(e, df_temp[which.max(e$y_hat),], type = "shap")
-sh_max$label <- paste0("Observation ID: ", which.max(e$y_hat))
+sh_max$variable[sh_max$variable == "visibility = 1"] = "visibility = Good"
+sh_max$variable_value[sh_max$variable_name == "visibility"] = "Good"
+sh_max$label <- paste0("Observation ID: ", which.max(e$y_hat), 
+                       " | Prediction: ", round(max(e$y_hat), 3))
 
-p_sh <- (plot(sh_min, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + labs(title = "Shapley values of random forest predictions", y=NULL) + scale_y_continuous(limits=c(-0.1, 0.15))) /
-  (plot(sh_avg, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + labs(title = NULL, y=NULL) + scale_y_continuous(limits=c(-0.1, 0.15))) /
-  (plot(sh_max, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + labs(title = NULL) + scale_y_continuous(limits=c(-0.1, 0.15)))
+p_sh <- (plot(sh_min, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + 
+           labs(title = "Shapley values of random forest predictions", y=NULL) + 
+           scale_y_continuous(limits=c(-0.1, 0.15))) /
+  (plot(sh_avg, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + 
+     labs(title = NULL, y=NULL) + scale_y_continuous(limits=c(-0.1, 0.15))) /
+  (plot(sh_max, vcolors = vcolors, max_vars = MAX_VARS, show_boxplots=FALSE) + 
+     labs(title = NULL, y="Variable attribution to the prediction") +
+     scale_y_continuous(limits=c(-0.1, 0.15)))
 
 ggsave("../results/fig_shapleyvalues.png", p_sh, width=9, height=7)
 

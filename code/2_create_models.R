@@ -1,6 +1,11 @@
+# tree (baseline)    0.65 +- 0.05   0.60 +- 0.06   0.85 +- 0.03 
+# tree (tuned)       0.62 +- 0.05   0.63 +- 0.09   0.86 +- 0.04
+# forest (baseline)  0.75 +- 0.06   0.71 +- 0.05   0.91 +- 0.03 
+# forest (tuned)     0.76 +- 0.05   0.72 +- 0.05   0.91 +- 0.02
+
 SEED <- 123
 
-source("utils.R")
+source("0_utils.R")
 df <- readRDS(paste0("../data/mpilot_accidents_dataset_preprocessed.rds"))
 
 mean(as.numeric(as.character(df$target)))

@@ -3,4 +3,4 @@
 This repository contains data and code for the paper:
 
 > Gokhan Camliyurt, Hubert Baniecki, Won Sik Kang, Przemyslaw Biecek, Daewon Kim, Sangwon Park, Youngsoo Park. 
-**Machine learning on multi-source data to predict and explain marine pilot occupational accidents**, 2022.
+**Machine Learning with Multi-Source Data to Predict and Explain Marine Pilot Occupational Accidents**, 2022.

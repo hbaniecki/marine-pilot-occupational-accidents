@@ -19,7 +19,7 @@ df_subset_1 <- df_raw %>%
 
 df_subset_2 <- df_subset_1 %>%
   mutate(accident_location = recode_factor(as.factor(accident_location),
-       "6"="Polot/Combination ladder", "5"="Boat Navigation",
+       "6"="Pilot/Combination ladder", "5"="Boat Navigation",
        "8"="Use of pilot door", "7"="Deck to bridge",
        "3"="Pier to boat transfer", "4"="Gangway/Accom ladder climbing"
   ),
@@ -30,6 +30,7 @@ df_subset_2 <- df_subset_1 %>%
        "5"="Evening", "4"="Sunset-Twilight-Dusk",
        "7"=NA_character_
   ),
+  ##       wave_height = sea_state,
          ship_type = recode_factor(as.factor(ship_type),
        "9"="Passenger", "8"="Pilot/Tug Boat", "2"="Bulk carrier",
        "1"="Tanker", "5"="Offshore", "3"="Container", "10"="Ro-ro /Car carrier",
@@ -45,6 +46,10 @@ df_subset_2 <- df_subset_1 %>%
        "3"="Underway", "1"="Moored", "5"="Maneuvering", "2"="Anchored",
        "8"=NA_character_
   ),
+  ## visibility serves better as an ordered variable
+  #        visibility = recode_factor(as.factor(visibility), 
+  #      "1"="Good", "2"="Moderate", "3"="Poor", "4"=NA_character_
+  # ),
          length_overall = cut(length_overall,
                               breaks = length_ton$length_overall),
          gross_ton = cut(gross_ton,
